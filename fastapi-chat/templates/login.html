@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>로그인</title>
+  <style>
+    #login-info { display: none; margin-bottom: 1em; }
+    #login-form { margin-bottom: 1em; }
+  </style>
+</head>
+<body>
+    <!-- 로그인한 정보 및 버튼 영역 -->
+  <div id="login-info">
+    <h2 id="user-id"></h2>
+    <button id="logout-btn">로그아웃</button>
+    <button id="chat-btn">채팅하기</button>
+  </div>
+  <!-- 로그인 폼 영역 -->
+  <form id="login-form">
+    <input type="text" id="id" name="id" placeholder="아이디" required><br>
+    <input type="password" id="password" name="password" placeholder="비밀번호" required><br>
+    <button type="submit">로그인</button>
+  </form>
+  <a href="/register">회원가입하러 가기</a>
+
+  <script>
+    
+    document.addEventListener("DOMContentLoaded", () => {
+      // 화면 상태를 업데이트하는 함수
+      function render() {
+        console.log("render 호출됨");
+        // JWT가 localStorage에 있는지 확인
+        const token = localStorage.getItem("access_token");
+        const loginInfoDiv = document.getElementById("login-info");
+        const loginForm = document.getElementById("login-form");
+        if (token) {
+          console.log("로그인된 상태");
+          // 토큰에서 id 추출
+          try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            const userId = payload.sub;
+            document.getElementById("user-id").innerText = `${userId}님, 환영합니다!`;
+          } catch { document.getElementById("user-id").innerText = "알 수 없음"; }
+          loginInfoDiv.style.display = "block";
+          loginForm.style.display = "none";
+          console.log("loginInfoDiv.style.display =", loginInfoDiv.style.display);
+          console.log("Computed style =", getComputedStyle(loginInfoDiv).display);
+        } else {
+          console.log("로그인되지 않음");
+          loginInfoDiv.style.display = "none";
+          loginForm.style.display = "block";
+        }
+      }
+
+      document.getElementById("login-form").addEventListener("submit", async (e) => {
+        e.preventDefault(); // 폼 기본 제출 막기
+
+        const id = document.getElementById("id").value;
+        const password = document.getElementById("password").value;
+
+        const response = await fetch('/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: `id=${encodeURIComponent(id)}&password=${encodeURIComponent(password)}`
+        });
+
+        const data = await response.json();
+        console.log(data.access_token)
+        if (data.access_token) {
+          localStorage.setItem("access_token", data.access_token);
+          window.location.href = `/login?id=${id}`;
+        } else {
+          alert(data.error || "로그인 실패");
+        }
+      });
+
+      // 로그아웃 버튼 핸들러
+      document.getElementById("logout-btn").addEventListener("click", () => {
+        localStorage.removeItem("access_token");
+        render(); // 로그인폼 다시 보이게
+      });
+
+      // 채팅하기 버튼은 일단 구현만 (나중에 연결)
+      document.getElementById("chat-btn").addEventListener("click", () => {
+        // JWT에서 id(사용자명) 꺼냄
+        const token = localStorage.getItem("access_token");
+        let userId = "";
+        if (token) {
+          try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            userId = payload.sub;
+          } catch {}
+        }
+        window.location.href = `/chat?id=${encodeURIComponent(userId)}`;
+      });
+
+      // 최초 렌더링 (새로고침 때도 상태 반영)
+      render();
+    });
+  </script>
+</body>
+</html>

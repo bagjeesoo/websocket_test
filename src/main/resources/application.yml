@@ -1,0 +1,16 @@
+spring:
+  mvc:
+      view:
+        prefix: /WEB-INF/views/
+        suffix: .jsp
+  elasticsearch:
+    uris: http://localhost:9200
+logging:
+  level:
+    org.elasticsearch.client: TRACE
+  
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true

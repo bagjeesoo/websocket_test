@@ -1,0 +1,12 @@
+fastapi==0.110.2         # 최신 버전은 확인 후 쓰세요
+uvicorn[standard]==0.29.0 # ASGI 서버
+jinja2
+PyJWT
+# passlib[bcrypt]
+python-multipart
+pymysql
+cryptography
+python-dotenv
+redis
+bcrypt>=4.0.0
+passlib>=1.7.4

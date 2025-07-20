@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <h1>채팅방</h1>
+    <div>내 아이디: <span id="my-id"></span></div>
+    <textarea id="chat-log" cols="50" rows="10" readonly></textarea><br>
+    <input type="text" id="msg-input"><button onclick="sendMsg()">전송</button>
+    <button onclick="location.href='/login'">로그아웃/돌아가기</button>
+    
+    <script>
+        // 1. JWT 토큰 필수
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+        alert("로그인이 필요합니다.");
+        window.location.href = "/login";        
+        }
+
+        // 2. 내 ID 표시 (JWT의 payload에서)
+        let myId = "";
+        try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        myId = payload.sub;
+        document.getElementById("my-id").innerText = myId;
+        } catch {
+        document.getElementById("my-id").innerText = "알 수 없음";
+        }
+
+        // 3. WebSocket 연결 (token 쿼리로 전달)
+        const room = "default";
+        const ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}&room=${encodeURIComponent(room)}`);
+        console.log(token)
+        ws.onopen = () => {
+            document.getElementById("chat-log").value += "☑️ 서버에 연결되었습니다.\n";
+        };
+        ws.onmessage = event => {
+            const chatLog = document.getElementById("chat-log");
+            chatLog.value += event.data + "\n";
+            // 자동 스크롤 최하단 이동
+            chatLog.scrollTop = chatLog.scrollHeight;
+        };
+        ws.onclose = () => {
+            document.getElementById("chat-log").value += "[연결종료]\n";
+        };
+        ws.onerror = (e) => {
+            document.getElementById("chat-log").value += "[오류 발생]\n";
+        };
+
+
+        // 4. 메시지 전송
+        function sendMsg() {
+            const input = document.getElementById("msg-input");
+            const chatLog = document.getElementById("chat-log");
+            if (input.value.trim() !== "") {
+                ws.send(input.value);
+            }
+            input.value = "";
+            // 내 메시지 전송 후에도 스크롤 내리기
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+        //  엔터키로 전송: Enter 누르면 전송되게 함
+        document.getElementById("msg-input").addEventListener("keydown", function(event) {
+            if (event.key === "Enter") {
+                event.preventDefault(); // 새 줄 삽입 방지
+                sendMsg();
+            }
+        });
+    </script>
+</body>
+</html>

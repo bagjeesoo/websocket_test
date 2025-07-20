@@ -1,0 +1,60 @@
+
+services:
+  fastapi-app:
+    build: ./fastapi-chat
+    ports:
+      - "8000:80"
+    env_file:
+      - ./.env
+    # 환경변수에 DB 접속 정보 지정(아래 예시 참고)
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=testuser
+      - MYSQL_PASSWORD=testpass
+      - MYSQL_DATABASE=mydb
+    depends_on:
+      - mysql
+  mysql:
+    image: mysql:8.0
+    restart: always
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: mydb
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: testpass
+      TZ: Asia/Seoul
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql_data:/var/lib/mysql
+  elastic:
+    build:
+      context: .
+      dockerfile: Dockerfile.txt
+    ports:
+      - 9200:9200
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.enrollment.enabled=true
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.10.2
+    ports:
+      - 5044:5044
+    environment:
+      - ELASTICSERACH_HOSTS=http://elastic:9200
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.17.4
+    ports:
+      - 5601:5601
+    environment:
+      - ELASTICSERACH_HOSTS=http://elastic:9200
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: always

@@ -13,19 +13,31 @@
   <div id="login-info">
     <h2 id="user-id"></h2>
     <button id="logout-btn">로그아웃</button>
-    <button id="chat-btn">채팅하기</button>
+    <!-- <button id="chat-btn">채팅하기</button> -->
   </div>
   <!-- 로그인 폼 영역 -->
   <form id="login-form">
     <input type="text" id="id" name="id" placeholder="아이디" required><br>
     <input type="password" id="password" name="password" placeholder="비밀번호" required><br>
     <button type="submit">로그인</button>
+    <a href="/register">회원가입하러 가기</a>
   </form>
-  <a href="/register">회원가입하러 가기</a>
+  <!-- 모달 배경 -->
+  <div id="user-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.3); z-index:10;">
+    <!-- 모달 내용 -->
+    <div style="background:#fff; margin:15vh auto 0; max-width:400px; padding:24px; border-radius:8px; box-shadow:0 2px 8px #0002; position:relative;">
+      <h2>접속한 유저</h2>
+      <ul id="user-list" style="list-style:none; padding:0;"></ul>
+      <button onclick="closeUserModal()"  style="position:absolute;top:8px;right:12px;">X</button>
+    </div>
+  </div>
+  <!-- 모달 띄우기용 버튼 -->
+  <button id="show-users-btn">접속한 유저</button>  
+  <div id="chat-alert" style="display:none; position:fixed; bottom:20px; right:20px; background:#333; color:white; padding:10px 18px; border-radius:8px; z-index:999;"></div>
 
-  <script>
-    
+  <script>    
     document.addEventListener("DOMContentLoaded", () => {
+
       // 화면 상태를 업데이트하는 함수
       function render() {
         console.log("render 호출됨");
@@ -76,25 +88,88 @@
         }
       });
 
+      function openUserModal() {
+        document.getElementById('user-modal').style.display = 'block';
+        fetchAndShowUsers();
+      }
+      
+      window.closeUserModal = function(){
+        document.getElementById('user-modal').style.display = 'none';
+      }
+
+      document.getElementById('show-users-btn').onclick = openUserModal;
+
       // 로그아웃 버튼 핸들러
       document.getElementById("logout-btn").addEventListener("click", () => {
         localStorage.removeItem("access_token");
         render(); // 로그인폼 다시 보이게
       });
 
-      // 채팅하기 버튼은 일단 구현만 (나중에 연결)
-      document.getElementById("chat-btn").addEventListener("click", () => {
-        // JWT에서 id(사용자명) 꺼냄
-        const token = localStorage.getItem("access_token");
-        let userId = "";
-        if (token) {
-          try {
+      // 접속한 유저들 
+      function fetchAndShowUsers() {
+        fetch('/logged-in-users')
+          .then(res => res.json())
+          .then(data => {
+            const token = localStorage.getItem("access_token");
             const payload = JSON.parse(atob(token.split('.')[1]));
-            userId = payload.sub;
-          } catch {}
-        }
-        window.location.href = `/chat?id=${encodeURIComponent(userId)}`;
-      });
+            const myId = payload.sub;
+            const userList = document.getElementById('user-list');
+            userList.innerHTML = "";
+            // 본인을 제외한 유저 리스트 출력
+            data.users.filter(u => u !== myId).forEach(user => {
+              const li = document.createElement('li');
+              li.innerText = user + " ";
+              const btn = document.createElement('button');
+              btn.innerText = "대화하기";
+              btn.onclick = () => {
+                openChatWith(user); // 아래 함수 정의(1:1 방 자동연결)
+                closeUserModal();
+              };
+              li.appendChild(btn);
+              userList.appendChild(li);
+            });
+          });
+      }
+
+      // 1 대 1 채팅방 자동연결 함수
+      function openChatWith(recipientId) {
+        const token = localStorage.getItem("access_token");
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        const myId = payload.sub;
+
+        // 항상 같은 1:1 방 이름 생성
+        const room = [myId, recipientId].sort().join("-");
+        window.location.href = `/chat?room=${encodeURIComponent(room)}`;
+      }
+
+      // 알림 WebSocket 별도로 연결
+      const alertToken = localStorage.getItem("access_token");
+      const alertSocket = new WebSocket(`ws://${location.host}/ws/alert?token=${encodeURIComponent(alertToken)}`);
+
+      alertSocket.onmessage = (event) => {
+          try {
+              const data = JSON.parse(event.data);
+              const sender = data.from;
+              const msg = data.message;
+
+              // 현재 방(target room) 아니면 알림 표시
+              if (typeof room === "undefined" || !room.includes(sender)) {
+                showNotification(sender, msg);
+              }
+          } catch {
+              console.error("알림 파싱 에러", event.data);
+          }
+      }
+
+      function showNotification(sender, message) {
+          const alertBox = document.getElementById("chat-alert");
+          alertBox.innerText = `${sender}님으로부터 메시지 도착: ${message}`;
+          alertBox.style.display = 'block';
+
+          setTimeout(() => {
+              alertBox.style.display = 'none';
+          }, 4000); // 4초 뒤에 알림 숨기기
+      }
 
       // 최초 렌더링 (새로고침 때도 상태 반영)
       render();

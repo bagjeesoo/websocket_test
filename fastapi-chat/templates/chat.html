@@ -11,6 +11,7 @@
     <textarea id="chat-log" cols="50" rows="10" readonly></textarea><br>
     <input type="text" id="msg-input"><button onclick="sendMsg()">전송</button>
     <button onclick="location.href='/login'">로그아웃/돌아가기</button>
+    <div id="chat-alert" style="display:none; position:fixed; bottom:20px; right:20px; background:#333; color:white; padding:10px 18px; border-radius:8px; z-index:999;"></div>
     
     <script>
         // 1. JWT 토큰 필수
@@ -31,17 +32,57 @@
         }
 
         // 3. WebSocket 연결 (token 쿼리로 전달)
-        const room = "default";
+        const room = new URL(window.location.href).searchParams.get("room") || "default";
         const ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}&room=${encodeURIComponent(room)}`);
         console.log(token)
         ws.onopen = () => {
             document.getElementById("chat-log").value += "☑️ 서버에 연결되었습니다.\n";
         };
+
+        // 현재 room 이름 저장
+        const currentRoom = new URL(location.href).searchParams.get("room") || "default";
+
         ws.onmessage = event => {
-            const chatLog = document.getElementById("chat-log");
-            chatLog.value += event.data + "\n";
-            // 자동 스크롤 최하단 이동
-            chatLog.scrollTop = chatLog.scrollHeight;
+            // const message = event.data;             // "username: 메시지" 형식
+            // // 첫 연결 메시지 무시 등
+            // if (!message.includes(":")) return;
+            
+            // const [sender, ...parts] = message.split(": ");
+            // const content = parts.join(": ");
+            // const chatLog = document.getElementById("chat-log");
+
+            // // 알림 조건: 보낸 사람이 나 자신이 아니고, 현재 방의 사람이 아니면
+            // if (![...currentRoom.split("-")].includes(sender) && sender !== myId) {
+            //     showNotification(sender, content);
+            // }
+
+            // // 메시지를 출력
+            // chatLog.value += message + "\n";
+            // chatLog.scrollTop = chatLog.scrollHeight;
+            
+            try {
+                const parsed = JSON.parse(event.data);
+                const { sender, room: messageRoom, message } = parsed;
+
+                // 1. 메시지 출력
+                const chatLog = document.getElementById("chat-log");
+                chatLog.value += `${sender}: ${message}\n`;
+                chatLog.scrollTop = chatLog.scrollHeight;
+
+                console.log("현재 방:", currentRoom);
+                console.log("메시지 방:", messageRoom);
+                console.log("보낸 사람:", sender);
+                console.log("내 아이디:", myId);
+
+                // 2. 알림 조건: 내가 접속한 방이 아닌 방에서 온 메시지
+                if (messageRoom.trim() !== currentRoom.trim() && sender !== myId) {
+                    showNotification(sender, message);
+                }
+            } catch {
+                // 혹시 JSON이 아닌 일반 메시지면 그냥 출력
+                document.getElementById("chat-log").value += event.data + "\n";
+            }
+
         };
         ws.onclose = () => {
             document.getElementById("chat-log").value += "[연결종료]\n";
@@ -69,6 +110,37 @@
                 sendMsg();
             }
         });
+
+        function showNotification(sender, message) {
+            const alertBox = document.getElementById("chat-alert");
+            alertBox.innerText = `${sender}님으로부터 메시지 도착: ${message}`;
+            alertBox.style.display = 'block';
+
+            setTimeout(() => {
+                alertBox.style.display = 'none';
+            }, 4000); // 4초 뒤에 알림 숨기기
+        }
+
+        // 알림 WebSocket 별도로 연결
+        const alertToken = localStorage.getItem("access_token");
+        const alertSocket = new WebSocket(`ws://${location.host}/ws/alert?token=${encodeURIComponent(alertToken)}`);
+
+        alertSocket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                const sender = data.from;
+                const msg = data.message;
+
+                // 현재 방(target room) 아니면 알림 표시
+                if (!room.includes(sender)) {
+                showNotification(sender, msg);
+                }
+            } catch {
+                console.error("알림 파싱 에러", event.data);
+            }
+        }
+
+
     </script>
 </body>
 </html>

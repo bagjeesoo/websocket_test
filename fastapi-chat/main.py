@@ -8,6 +8,10 @@ from jwt_helper import create_access_token, verify_token
 from dotenv import load_dotenv
 import os
 import redis
+from user_manager import ConnectionManager
+from alert_manager import AlertManager
+from typing import Dict
+from json import dumps
 
 load_dotenv()
 # docker-compose.yml의 서비스명이 redis이면
@@ -24,34 +28,8 @@ fake_users_db = {}
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# 1. 연결된 웹소켓 클라이언트들 관리
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: dict[str, list[WebSocket]] = {}
-
-    async def connect(self, websocket: WebSocket, room: str):
-        await websocket.accept()
-        # 해당 room에 리스트가 없다면 먼저 만듦
-        if room not in self.active_connections:
-            self.active_connections[room] = []
-        self.active_connections[room].append(websocket)
-
-    def disconnect(self, websocket: WebSocket, room: str):
-        if room in self.active_connections:
-            try:
-                self.active_connections[room].remove(websocket)
-                # 아무도 남지 않았을 경우 방(리스트)을 아예 삭제할 수도 있음(선택)
-                if not self.active_connections[room]:
-                    del self.active_connections[room]
-            except ValueError:
-                pass  # 이미 없으면 무시
-
-    async def broadcast(self, message: str, room: str):
-        connections = self.active_connections.get(room, [])
-        for connection in connections:
-            await connection.send_text(message)
-
 manager = ConnectionManager()
+alert_manager = AlertManager()
 
 # 웹 채팅 페이지
 @app.get("/", response_class=HTMLResponse)
@@ -73,13 +51,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), room
     except Exception as e:
         print("❌ JWT 검증 실패:", e)
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return    
+        return
 
     # 2. 채팅방 key 설정
     chat_key = f"chatlog:{room}"
 
     # ✅ 먼저 websocket 연결 수락
-    await manager.connect(websocket, room)
+    await manager.connect(websocket, room, username)
     
 
     # 3. 연결 즉시, 최큰 메세지 100개 보내기
@@ -94,17 +72,47 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...), room
     try:
         while True:
             data = await websocket.receive_text()
-            msg = f"{username}: {data}"
-            redis_client.rpush(chat_key, msg)
+
+            # msg = f"{username}: {data}"
+            # redis_client.rpush(chat_key, msg)
+
+            msg_data = {
+                "sender": username,
+                "room": room,
+                "message": data
+            }
+            redis_client.rpush(chat_key, dumps(msg_data))
             # 한 방에 500개만 유지
             redis_client.ltrim(chat_key, -500, -1)
-            await manager.broadcast(msg, room)  # 방에 뿌림 
+            await manager.broadcast(dumps(msg_data), room)  # 방에 뿌림 
+
+            # 예: dm between userA and userB
+            members = room.split("-")
+            for member in members:
+                if member != username:  # 받은 사람 (나 제외)
+                    await alert_manager.send_alert(to_user_id=member, from_user_id=username, message=data)
+
     except WebSocketDisconnect:
-        manager.disconnect(websocket, room)
+        manager.disconnect(websocket, room, username)
         await manager.broadcast(f"❌ {username}님이 퇴장했습니다.", room)
 
+# 다른 곳에 있을 때 알람받기
+@app.websocket("/ws/alert")
+async def alert_listener(websocket: WebSocket, token: str = Query(...)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        user_id = payload.get("sub")
+    except:
+        await websocket.close()
+        return
 
+    await alert_manager.connect(websocket, user_id)
 
+    try:
+        while True:
+            await websocket.receive_text()  # 어떤 입력도 안 받지만 끊기지 않게
+    except WebSocketDisconnect:
+        alert_manager.disconnect(websocket, user_id)
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_page(request: Request):
@@ -146,6 +154,7 @@ async def register(id: str = Form(...), password: str = Form(...)):
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
+logged_in_users: set[str] = set()
 # 로그인 기능
 @app.post("/login")
 async def login(id: str = Form(...), password: str = Form(...)):
@@ -168,6 +177,8 @@ async def login(id: str = Form(...), password: str = Form(...)):
             # ✅ JWT 토큰 생성
             token = create_access_token({"sub": id})
             conn.commit()
+
+            logged_in_users.add(id)  # ✅ 로그인한 유저 저장
         
             # ✅ 토큰을 응답으로 전달 (방법 1: JSON)
             return JSONResponse(content={
@@ -176,6 +187,7 @@ async def login(id: str = Form(...), password: str = Form(...)):
                 "message": f"{id}님 로그인 성공!",
                 "sub": id
             })
+        
         else:
             return {"error": "비밀번호가 일치하지 않습니다."}
 
@@ -184,8 +196,49 @@ async def login(id: str = Form(...), password: str = Form(...)):
         return HTMLResponse("서버 오류가 발생했습니다.", status_code=500)
     finally:
         conn.close()
+
+# 로그인된 유저들 가져오기
+@app.get("/logged-in-users")
+async def get_logged_in_users():
+    return {"users": list(logged_in_users)}
+
+@app.post("/logout")
+async def logout(id: str = Form(...)):
+    logged_in_users.discard(id)
+    return {"msg": "로그아웃됨"}
     
 
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_page(request: Request):
     return templates.TemplateResponse("chat.html", {"request": request})
+
+
+
+
+
+# 1. 연결된 웹소켓 클라이언트들 관리
+# class ConnectionManager:
+#     def __init__(self):
+#         self.active_connections: dict[str, list[WebSocket]] = {}
+
+#     async def connect(self, websocket: WebSocket, room: str):
+#         await websocket.accept()
+#         # 해당 room에 리스트가 없다면 먼저 만듦
+#         if room not in self.active_connections:
+#             self.active_connections[room] = []
+#         self.active_connections[room].append(websocket)
+
+#     def disconnect(self, websocket: WebSocket, room: str):
+#         if room in self.active_connections:
+#             try:
+#                 self.active_connections[room].remove(websocket)
+#                 # 아무도 남지 않았을 경우 방(리스트)을 아예 삭제할 수도 있음(선택)
+#                 if not self.active_connections[room]:
+#                     del self.active_connections[room]
+#             except ValueError:
+#                 pass  # 이미 없으면 무시
+
+#     async def broadcast(self, message: str, room: str):
+#         connections = self.active_connections.get(room, [])
+#         for connection in connections:
+#             await connection.send_text(message)
